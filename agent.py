@@ -26,7 +26,10 @@ class Agent:
         *,
         temperature: float = 1.0,
         move_selection_algo: MoveSelectionAlgo = "sample",
-        learning_rate: float = 1e-3
+        learning_rate: float = 1e-3,
+        device: str = "cpu",
+        simulation_count: int = 64,
+        exploration_strength: float = 1.5
     ) -> None:
         """
         Initialize agent
@@ -35,6 +38,9 @@ class Agent:
             temperature: Encourages less confident move
             move_selection_algo: Select a move based on given algorithm
             learning_rate: Learning rate of the agent
+            device: Device to run the agent
+            simulation_count: MCTS simulation count
+            exploration_strength: Encourages model to explore new moves if bigger
             
         Returns:
             None
@@ -44,18 +50,54 @@ class Agent:
         self._temperature: float = temperature
         self._move_selection_algo: MoveSelectionAlgo = move_selection_algo
         self._learning_rate: float = learning_rate
+        self._device: torch.device = torch.device(device)
+        self._simulation_count: int = simulation_count
+        self._exploration_strength: float = exploration_strength
 
         # Initialize model
         self._chess_net: ChessNet = ChessNet(
             Encoder.output_channels_size
-        )
+        ).to(self._device)
         self._optimizer: torch.optim.AdamW = torch.optim.AdamW(
             self._chess_net.parameters(),
             lr=self._learning_rate
         )
         self._mcts: MCTS = MCTS(
-            self._chess_net
+            self._evaluate_position,
+            simulation_count=simulation_count,
+            exploration_strength=exploration_strength
         )
+
+
+    # ----- Public attributes -----
+
+    @property
+    def chess_net(
+        self
+    ) -> ChessNet:
+        """
+        Return the trainable neural network
+
+        Returns:
+            ChessNet class
+        """
+
+        # Return chessnet model instance
+        return self._chess_net
+
+    @property
+    def optimizer(
+        self
+    ) -> torch.optim.AdamW:
+        """
+        Return the optimizer used to train the network
+        
+        Returns:
+            Optimizer instance
+        """
+
+        # Return optimizer instance
+        return self._optimizer
 
 
     # ----- Public methods -----
@@ -74,8 +116,8 @@ class Agent:
             None
         """
 
-        # Let MCTS search move and get root node
-        root_node = self._mcts.run(environment)
+        # Agent coordinates encoding, inference, and the MCTS search.
+        root_node = self._search(environment)
 
         # Calculate next move probabilities
         move_ids, move_probs = self._calculate_move_probs(root_node)
@@ -85,6 +127,32 @@ class Agent:
 
         # Execute the move
         environment.move(move_id)
+
+    def to(
+        self,
+        device: str
+    ) -> None:
+        """
+        Move the agent to a device
+        
+        Args:
+            device: Device name
+
+        Returns:
+            None
+        """
+
+        # Convert into torch device
+        self._device = torch.device(device)
+
+        # Move chess net to given device
+        self._chess_net.to(self._device)
+
+        # Move optimizer to given device
+        for state in self._optimizer.state.values():
+            for key, value in state.items():
+                if isinstance(value, torch.Tensor):
+                    state[key] = value.to(self._device)
 
     def load(
         self,
@@ -144,6 +212,79 @@ class Agent:
 
 
     # ----- Helpers -----
+
+    def _encode(
+        self,
+        environment: Environment
+    ) -> torch.Tensor:
+        """
+        Encode an environment for network inference
+
+        Args:
+            environment: Environment instance
+
+        Returns:
+            Encoded chess board
+        """
+
+        # Return encoded chess board
+        return Encoder.encode_board(environment.board)
+
+    @torch.no_grad()
+    def _search(
+        self,
+        environment: Environment
+    ) -> MCTSNode:
+        """
+        Search a position and evaluating nodes through this agent's network
+
+        Args:
+            environment: Environment instance
+
+        Returns:
+            Root MCTS node
+        """
+
+        # Temporarily store training state and set to eval mode
+        was_training = self._chess_net.training
+        self._chess_net.eval()
+
+        # Run MCTS and return the root node
+        try:
+            return self._mcts.run(environment)
+
+        # Change back model mode to training back
+        finally:
+            if was_training:
+                self._chess_net.train()
+
+    @torch.no_grad()
+    def _evaluate_position(
+        self,
+        environment: Environment
+    ) -> tuple[torch.Tensor, float]:
+        """
+        Encode and evaluate position for MCTS
+
+        Args:
+            environment: Environment instance
+
+        Returns:
+            Tuple with first index as policy logits score and second index
+            as value score
+        """
+
+        # Encode board into tensor
+        board_tensor = self._encode(environment).unsqueeze(0)
+
+        # Move board tensor to intended device
+        board_tensor = board_tensor.to(self._device)
+
+        # Input into chess net and get scores
+        policy_logits, value = self._chess_net(board_tensor)
+
+        # Return value
+        return (policy_logits[0], float(value.item()))
 
     def _calculate_move_probs(
         self,

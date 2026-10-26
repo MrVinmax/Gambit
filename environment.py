@@ -169,7 +169,7 @@ class Environment:
 
     def _decode_id_to_move(
         self,
-        move_id: str
+        move_id: int
     ) -> chess.Move:
         """
         Decode ID to move instance

@@ -4,8 +4,8 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Literal
 
 import chess
 import torch
@@ -29,7 +29,7 @@ class MCTSNode:
     visit_count: int = 0
     value_sum: float = 0.0
     expanded: bool = False
-    children: dict[chess.Move, MCTSNode] = field(default_factory=dict)
+    children: dict[int, MCTSNode] = field(default_factory=dict)
 
     @property
     def node_value(
@@ -54,6 +54,7 @@ class Encoder:
     # ----- Public attributes -----
 
     output_channels_size: int = 18
+
 
     # ----- Public methods -----
 
@@ -300,22 +301,21 @@ class MCTS:
 
     def __init__(
         self,
-        model: ChessNet,
+        evaluation_method: Callable,
         *,
-        device: Literal["cpu", "cuda"] = "cuda",
         simulation_count: int = 64,
         exploration_strength: float = 1.5,
         noise_distribution: float = 0.3,
         noise_fraction: float = 0.25
     ) -> None:
         """
-        Initialize class model
+        Initialize search parameters
 
         Args:
-            model: ChessNet model
+            evaluation_method: Caller-provided network evaluator returning legal-action
+            scores and a value from the current player's perspective
 
         Keyword Args:
-            device: Device to run model
             simulation_count: Perform n simulations
             exploration_strength: Controls how strongly MCTS
             favors exploring less-visited moves, higher means more exploration
@@ -329,8 +329,7 @@ class MCTS:
         """
 
         # Initialize class attributes
-        self._model: ChessNet = model
-        self._device: torch.device = torch.device(device)
+        self._evaluation_method: Callable = evaluation_method
         self._simulation_count: int = simulation_count
         self._exploration_strength: float = exploration_strength
         self._noise_distribution: float = noise_distribution
@@ -352,7 +351,7 @@ class MCTS:
             environment: Chess environment
 
         Keyword Args:
-            add_noise: Add noise to the policy logits of the ChessNet
+            add_noise: Add dirichlet noise to root move priors
 
         Returns:
             A root MCTS node
@@ -377,7 +376,7 @@ class MCTS:
 
             # Traverse through each child node
             while node.expanded and node.children:
-                _, node = self.select_child(node)
+                _, node = self._select_child(node)
 
                 # Append child node to path
                 path.append(node)
@@ -406,7 +405,6 @@ class MCTS:
 
     # ----- Helpers -----
 
-    @torch.no_grad()
     def _evaluate_and_expand(
         self,
         node: MCTSNode
@@ -423,38 +421,24 @@ class MCTS:
 
         # Check whether the game is over
         game_state = node.environment.state
-        if game_state:
+        if game_state is not None:
 
             # Set expanded to True and return terminal value
             node.expanded = True
             return game_state
 
-        # Temporarily store if model is in training state or not
-        was_training = self._model.training
-
-        # Set model to inference mode
-        self._model.eval()
-
-        # Encode board into tensor and add a batch dimension at the front
-        board_tensor = (
-            Encoder.encode_board(node.environment).unsqueeze(0).to(self._device)
-        )
-
-        # Infer with model and get policy logits and value tensor
-        policy_logits, value_tensor = self._model(board_tensor)
-
-        # Convert data type of value tensor to float
-        value = float(value_tensor.item())
+        # Call caller owns encoding and neural-network inference
+        policy_logits, value = self._evaluation_method(node.environment)
 
         # Parse legal moves ID into tensor type
         indices = torch.tensor(
             node.environment.legal_moves,
             dtype=torch.long,
-            device=self.device,
+            device=policy_logits.device,
         )
 
         # Get each legal move logits
-        legal_logits = policy_logits[0, indices]
+        legal_logits = policy_logits[indices]
 
         # Apply softmax to the logits
         priors = torch.softmax(legal_logits, dim=0).cpu().tolist()
@@ -472,10 +456,6 @@ class MCTS:
 
         # Set current node expanded state to True
         node.expanded = True
-
-        # Change the model back to train mode
-        if was_training:
-            self._model.train()
 
         # Return current state value
         return value
