@@ -105,7 +105,7 @@ class Agent:
     def run(
         self,
         environment: Environment
-    ) -> None:
+    ) -> tuple[torch.Tensor, list[int], list[float], int]:
         """
         React to given environment
 
@@ -113,10 +113,11 @@ class Agent:
             environment: Current environment
 
         Returns:
-            None
+            Encoded position, legal move IDs, move probabilities, and move ID
         """
 
         # Agent coordinates encoding, inference, and the MCTS search.
+        board_tensor = self._encode(environment)
         root_node = self._search(environment)
 
         # Calculate next move probabilities
@@ -127,6 +128,9 @@ class Agent:
 
         # Execute the move
         environment.move(move_id)
+
+        # Return move trajectory
+        return (board_tensor, move_ids, move_probs, move_id)
 
     def to(
         self,
