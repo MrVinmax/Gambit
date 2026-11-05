@@ -99,7 +99,8 @@ def main() -> None:
         games_per_iteration=configs["games_per_iteration"],
         max_move=configs["max_move"],
         gradient_clip=configs["gradient_clip"],
-        engine_time_limit=configs["engine_time_limit"]
+        engine_time_limit=configs["engine_time_limit"],
+        starting_iteration=completed
     )
 
     # Initialize checkpoint folder

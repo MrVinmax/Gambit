@@ -51,7 +51,8 @@ class Trainer:
         games_per_iteration: int = 4,
         max_move: int = 250,
         gradient_clip: float = 5.0,
-        engine_time_limit: float = 0.1
+        engine_time_limit: float = 0.1,
+        starting_iteration: int = 0
     ) -> None:
         """
         Initialize trainer instance
@@ -85,7 +86,7 @@ class Trainer:
         self._gradient_clip: float = gradient_clip
         self._stockfish_path: Path = Path(stockfish_path)
         self._engine_time_limit: float = engine_time_limit
-        self._iteration: int = 0
+        self._iteration: int = starting_iteration
 
         # Move agent to specified device
         self._agent.to(device)
