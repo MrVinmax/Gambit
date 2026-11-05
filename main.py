@@ -86,11 +86,12 @@ def main() -> None:
             raise ValueError(
                 f"Cannot determine completed iterations from checkpoint filename: {args.resume.name}"
             )
+        print(f"Resuming from {completed} iteration")
 
     # Initialize trainer
     trainer = Trainer(
         agent,
-        Path(configs["stockfish_dir"]) / "stockfish-windows-x86-64-universal.exe",
+        Path(configs["stockfish_dir"]) / "stockfish.exe",
         device=configs["device"],
         data_capacity=configs["data_capacity"],
         batch_size=configs["batch_size"],
@@ -107,6 +108,11 @@ def main() -> None:
 
     # Get remaining iterations
     remaining = max(0, configs["train_iterations"] - completed)
+
+    # Initialize loss file
+    loss_path = Path("./output.txt")
+    if not loss_path.exists():
+        loss_path.touch()
 
     # Loop until every iteration is done
     while remaining:
@@ -132,12 +138,9 @@ def main() -> None:
         # Get valid losses
         valid_losses = [loss for loss in losses if loss is not None]
 
-        # Print valid losses
-        if valid_losses:
-            means = tuple(sum(x[i] for x in valid_losses) / len(valid_losses) for i in range(3))
-            print(f"iteration {completed}: loss={means[0]:.4f}, policy={means[1]:.4f}, value={means[2]:.4f}; saved {checkpoint}")
-        else:
-            print(f"iteration {completed}: insufficient replay data; saved {checkpoint}")
+        # Save losses in a file
+        with open(loss_path, "a", encoding="utf-8") as loss_file:
+            loss_file.write(f"{valid_losses}\n")
 
 # Run main method
 main()

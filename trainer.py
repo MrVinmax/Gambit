@@ -149,13 +149,29 @@ class Trainer:
             # Loop through each iteration
             for _ in range(iterations):
 
+                # Print separator
+                print("\n===============================================\n")
+
                 # Set model to evaluation mode
                 self._agent.chess_net.eval()
 
                 # Play games to get data and append to data buffer
-                for _ in range(self._games_per_iteration):
-                    datas, _ = self._play_game(engine)
+                for game_number in range(self._games_per_iteration):
+                    datas, result, board_state = self._play_game(engine)
                     self._data_buffer.extend(datas)
+
+                    # Print terminal state
+                    if result is None:
+                        result_text = f"Unfinished (Move limit: {self._max_move})"
+                    elif result == 0.0:
+                        result_text = "Draw"
+                    else:
+                        result_text = f"{"Agent" if result == 1.0 else "Stockfish"} win"
+                    print(
+                        f"Iteration {self._iteration + 1}, "
+                        f"Game {game_number + 1}/{self._games_per_iteration}: "
+                        f"{result_text}\n{board_state}\n"
+                    )
 
                 # If there is no enough data to train skip current iteration
                 if (
@@ -167,6 +183,9 @@ class Trainer:
                 # Else if enough
                 else:
 
+                    # Print message
+                    print("\nUpdating model")
+
                     # Set model to train mode
                     self._agent.chess_net.train()
 
@@ -174,10 +193,16 @@ class Trainer:
                     step_losses = [self._train_step() for _ in range(self._train_steps)]
 
                     # Calculate the average of the losses
-                    losses_by_iteration.append(tuple(
+                    losses_avg = tuple(
                         sum(loss[index] for loss in step_losses) / len(step_losses)
                         for index in range(3)
-                    ))
+                    )
+
+                    # Append loss average for current iter
+                    losses_by_iteration.append(losses_avg)
+
+                    # Print current iter loss
+                    print(f"Current iter loss: {losses_avg}")
 
                 # Increment the iteration
                 self._iteration += 1
@@ -245,11 +270,11 @@ class Trainer:
                 probabilities,
                 environment.state
             )
-            for state, indices, probabilities, _ in trajectory
+            for state, indices, probabilities in trajectory
         ]
 
         # Return training data and terminal state
-        return (datas, environment.state)
+        return (datas, environment.state, environment.board)
 
     def _move_to_id(
         self,
