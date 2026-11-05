@@ -1,6 +1,6 @@
 {
-    "train_iterations": 1000,
-    "save_in_every_iter": 100,
+    "train_iterations": 10000,
+    "save_in_every_iter": 10,
     "checkpoint_dir": "./checkpoints",
     "stockfish_dir": "./stockfish",
     "device": "cpu",
@@ -11,8 +11,8 @@
     "games_per_iteration": 4,
     "max_move": 250,
     "gradient_clip": 5.0,
-    "stockfish_path": "stockfish",
     "engine_time_limit": 0.1,
+    "stockfish_elo": 1400,
     "temperature": 1.0,
     "data_capacity": 20000,
     "batch_size": 32,

@@ -91,7 +91,7 @@ def main() -> None:
     # Initialize trainer
     trainer = Trainer(
         agent,
-        Path(configs["stockfish_dir"]) / "stockfish.exe",
+        Path(configs["stockfish_dir"]) / "src" / "stockfish.exe",
         device=configs["device"],
         data_capacity=configs["data_capacity"],
         batch_size=configs["batch_size"],
@@ -100,7 +100,8 @@ def main() -> None:
         max_move=configs["max_move"],
         gradient_clip=configs["gradient_clip"],
         engine_time_limit=configs["engine_time_limit"],
-        starting_iteration=completed
+        starting_iteration=completed,
+        stockfish_elo=configs["stockfish_elo"]
     )
 
     # Initialize checkpoint folder

@@ -52,7 +52,8 @@ class Trainer:
         max_move: int = 250,
         gradient_clip: float = 5.0,
         engine_time_limit: float = 0.1,
-        starting_iteration: int = 0
+        starting_iteration: int = 0,
+        stockfish_elo: int = 1400
     ) -> None:
         """
         Initialize trainer instance
@@ -68,6 +69,8 @@ class Trainer:
             train_steps: Update model weights n times with same data
             games_per_iteration: N games to play before train
             max_move: Max count of move for a game, if exceeded will return draw
+            stockfish_elo: Elo of the stockfish
+            starting_iteration: Starting iteration count
             gradient_clip: Maximum gradient norm
             engine_time_limit: Stockfish thinking time per move, in seconds
 
@@ -86,6 +89,7 @@ class Trainer:
         self._gradient_clip: float = gradient_clip
         self._stockfish_path: Path = Path(stockfish_path)
         self._engine_time_limit: float = engine_time_limit
+        self._stockfish_elo: int = stockfish_elo
         self._iteration: int = starting_iteration
 
         # Move agent to specified device
@@ -146,6 +150,12 @@ class Trainer:
 
         # Initialize chess engine
         with chess.engine.SimpleEngine.popen_uci(self._stockfish_path) as engine:
+
+            # Configure stockfish elo
+            engine.configure({
+                "UCI_LimitStrength": True,
+                "UCI_Elo": self._stockfish_elo
+            })
 
             # Loop through each iteration
             for _ in range(iterations):
