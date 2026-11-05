@@ -42,6 +42,7 @@ class Trainer:
     def __init__(
         self,
         agent: Agent,
+        stockfish_path: str | Path,
         *,
         device: str = "cpu",
         data_capacity: int = 20000,
@@ -50,7 +51,6 @@ class Trainer:
         games_per_iteration: int = 4,
         max_move: int = 250,
         gradient_clip: float = 5.0,
-        stockfish_path: str | Path = "stockfish",
         engine_time_limit: float = 0.1
     ) -> None:
         """
@@ -58,6 +58,7 @@ class Trainer:
 
         Args:
             agent: Agent whose network and optimizer will be trained
+            stockfish_path: Stockfish executable path or command name
 
         Keyword Args:
             device: Torch device used for inference and training
@@ -67,7 +68,6 @@ class Trainer:
             games_per_iteration: N games to play before train
             max_move: Max count of move for a game, if exceeded will return draw
             gradient_clip: Maximum gradient norm
-            stockfish_path: Stockfish executable path or command name
             engine_time_limit: Stockfish thinking time per move, in seconds
 
         Returns:
@@ -136,7 +136,8 @@ class Trainer:
             iterations: Complete training cycle counts
 
         Returns:
-
+            Returns loss of each iteration or none if there is no training
+            has been done in that iteration
         """
 
         # Initialize losses container
