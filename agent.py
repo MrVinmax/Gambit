@@ -7,8 +7,8 @@ from typing import Literal
 
 import torch
 
-from .environment import Environment
-from .model import MCTS, ChessNet, Encoder, MCTSNode
+from environment import Environment
+from model import MCTS, ChessNet, Encoder, MCTSNode
 
 # Type hints
 MoveSelectionAlgo = Literal["max", "sample"]

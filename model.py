@@ -12,7 +12,7 @@ import torch
 from torch import nn
 from torch.nn import functional as torch_func
 
-from .environment import Environment
+from environment import Environment
 
 
 # Dataclass definition

@@ -13,8 +13,8 @@ import chess.engine
 import torch
 from torch.nn import functional as torch_func
 
-from .agent import Agent
-from .environment import Environment
+from agent import Agent
+from environment import Environment
 
 
 # Dataclass definition
