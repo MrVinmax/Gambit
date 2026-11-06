@@ -41,7 +41,7 @@ def main() -> None:
     args = parser.parse_args()
     config = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
     games = int(config.get("supervised_games", 1000))
-    iterations = int(config.get("supervised_iterations", config.get("supervised_epochs", 100)))
+    games_per_update = int(config.get("supervised_games_per_update", 10))
     save_every = int(config.get("save_in_every_iter", 10))
     batch_size = int(config.get("supervised_batch_size", 128))
     opening_plies = int(config.get("supervised_random_opening_plies", 12))
@@ -50,8 +50,8 @@ def main() -> None:
     device = config.get("device", "cpu")
     engine_path = ROOT / config.get("stockfish_dir", "stockfish") / "src" / "stockfish.exe"
 
-    if games < 1 or iterations < 1 or batch_size < 1 or save_every < 1:
-        raise ValueError("supervised_games, supervised_iterations, supervised_batch_size, and save_in_every_iter must be positive")
+    if games < 1 or games_per_update < 1 or batch_size < 1 or save_every < 1:
+        raise ValueError("supervised_games, supervised_games_per_update, supervised_batch_size, and save_in_every_iter must be positive")
 
     agent = Agent(
         temperature=config.get("temperature", 1.0),
@@ -70,9 +70,11 @@ def main() -> None:
             raise ValueError(f"Cannot determine completed iterations from checkpoint filename: {args.resume.name}") from exc
         print(f"Resuming from {completed} iteration")
 
-    # Each sample stores board, chosen move, and final outcome from the
-    # perspective of the side to move in that position.
+    # Keep a replay set so each update can mix recent games with earlier ones.
     samples: list[tuple[torch.Tensor, int, float]] = []
+    output_dir = ROOT / config.get("checkpoint_dir", "checkpoints")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    agent.chess_net.train()
     engine = chess.engine.SimpleEngine.popen_uci(str(engine_path))
     try:
         engine.configure({"UCI_LimitStrength": True, "UCI_Elo": stockfish_elo})
@@ -111,49 +113,45 @@ def main() -> None:
                 }
             samples.extend((state, move_id, value_by_color[color]) for state, move_id, color in game_samples)
             print(f"Game {game_no + 1}/{games}: {result_text}; {len(game_samples)} positions\n{board}\n")
+
+            # Update as soon as each small group of games is available.
+            if (game_no + 1) % games_per_update == 0 or game_no + 1 == games:
+                if not samples:
+                    continue
+                random.shuffle(samples)
+                total_loss = policy_total = value_total = 0.0
+                batches = 0
+                for start in range(0, len(samples), batch_size):
+                    batch = samples[start : start + batch_size]
+                    states = torch.stack([sample[0] for sample in batch]).to(device)
+                    targets = torch.tensor([sample[1] for sample in batch], dtype=torch.long, device=device)
+                    value_targets = torch.tensor([sample[2] for sample in batch], dtype=torch.float32, device=device)
+                    logits, values = agent.chess_net(states)
+                    policy_loss = F.cross_entropy(logits, targets)
+                    value_loss = F.mse_loss(values.reshape(-1), value_targets)
+                    loss = policy_loss + value_loss
+                    agent.optimizer.zero_grad(set_to_none=True)
+                    loss.backward()
+                    torch.nn.utils.clip_grad_norm_(agent.chess_net.parameters(), config.get("gradient_clip", 5.0))
+                    agent.optimizer.step()
+                    total_loss += float(loss.item())
+                    policy_total += float(policy_loss.item())
+                    value_total += float(value_loss.item())
+                    batches += 1
+                completed += 1
+                print(
+                    f"Iteration {completed}: total loss {total_loss / batches:.4f}, "
+                    f"policy loss {policy_total / batches:.4f}, value loss {value_total / batches:.4f} "
+                    f"(trained after game {game_no + 1})"
+                )
+                if completed % save_every == 0 or game_no + 1 == games:
+                    agent.save(output_dir / f"agent_iteration_{completed:06d}.pt")
+                    print(f"Saved checkpoint at iteration {completed}")
     finally:
         engine.quit()
 
     if not samples:
         raise RuntimeError("Stockfish generated no training positions")
-
-    agent.chess_net.train()
-    output_dir = ROOT / config.get("checkpoint_dir", "checkpoints")
-    output_dir.mkdir(parents=True, exist_ok=True)
-    remaining = max(0, iterations - completed)
-    while remaining:
-        block = min(save_every, remaining)
-        for _ in range(block):
-            random.shuffle(samples)
-            total_loss = 0.0
-            policy_total = 0.0
-            value_total = 0.0
-            batches = 0
-            for start in range(0, len(samples), batch_size):
-                batch = samples[start : start + batch_size]
-                states = torch.stack([sample[0] for sample in batch]).to(device)
-                targets = torch.tensor([sample[1] for sample in batch], dtype=torch.long, device=device)
-                value_targets = torch.tensor([sample[2] for sample in batch], dtype=torch.float32, device=device)
-                logits, values = agent.chess_net(states)
-                policy_loss = F.cross_entropy(logits, targets)
-                value_loss = F.mse_loss(values.reshape(-1), value_targets)
-                loss = policy_loss + value_loss
-                agent.optimizer.zero_grad(set_to_none=True)
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(agent.chess_net.parameters(), config.get("gradient_clip", 5.0))
-                agent.optimizer.step()
-                total_loss += float(loss.item())
-                policy_total += float(policy_loss.item())
-                value_total += float(value_loss.item())
-                batches += 1
-            completed += 1
-            print(
-                f"Iteration {completed}/{iterations}: total loss {total_loss / batches:.4f}, "
-                f"policy loss {policy_total / batches:.4f}, value loss {value_total / batches:.4f}"
-            )
-        remaining -= block
-        agent.save(output_dir / f"agent_iteration_{completed:06d}.pt")
-        print(f"Saved checkpoint at iteration {completed}")
 
 
 if __name__ == "__main__":
