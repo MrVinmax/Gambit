@@ -74,6 +74,9 @@ def main() -> None:
     samples: list[tuple[torch.Tensor, int, float]] = []
     output_dir = ROOT / config.get("checkpoint_dir", "checkpoints")
     output_dir.mkdir(parents=True, exist_ok=True)
+    loss_path = ROOT / config.get("supervised_loss_file", "supervised_losses.csv")
+    if not loss_path.exists():
+        loss_path.write_text("iteration,games_seen,total_loss,policy_loss,value_loss\n", encoding="utf-8")
     agent.chess_net.train()
     engine = chess.engine.SimpleEngine.popen_uci(str(engine_path))
     try:
@@ -139,11 +142,19 @@ def main() -> None:
                     value_total += float(value_loss.item())
                     batches += 1
                 completed += 1
+                mean_total = total_loss / batches
+                mean_policy = policy_total / batches
+                mean_value = value_total / batches
                 print(
-                    f"Iteration {completed}: total loss {total_loss / batches:.4f}, "
-                    f"policy loss {policy_total / batches:.4f}, value loss {value_total / batches:.4f} "
+                    f"Iteration {completed}: total loss {mean_total:.4f}, "
+                    f"policy loss {mean_policy:.4f}, value loss {mean_value:.4f} "
                     f"(trained after game {game_no + 1})"
                 )
+                with loss_path.open("a", encoding="utf-8") as loss_file:
+                    loss_file.write(
+                        f"{completed},{game_no + 1},{mean_total:.8f},"
+                        f"{mean_policy:.8f},{mean_value:.8f}\n"
+                    )
                 if completed % save_every == 0 or game_no + 1 == games:
                     agent.save(output_dir / f"agent_iteration_{completed:06d}.pt")
                     print(f"Saved checkpoint at iteration {completed}")
