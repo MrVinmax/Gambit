@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import random
+import argparse
 from pathlib import Path
 
 import chess
@@ -35,9 +36,13 @@ def move_to_id(move: chess.Move) -> int:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--resume", type=Path, help="Resume from a numbered agent checkpoint")
+    args = parser.parse_args()
     config = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
     games = int(config.get("supervised_games", 1000))
-    epochs = int(config.get("supervised_epochs", 5))
+    iterations = int(config.get("supervised_iterations", config.get("supervised_epochs", 100)))
+    save_every = int(config.get("save_in_every_iter", 10))
     batch_size = int(config.get("supervised_batch_size", 128))
     opening_plies = int(config.get("supervised_random_opening_plies", 12))
     stockfish_elo = int(config.get("stockfish_elo", 1400))
@@ -45,8 +50,8 @@ def main() -> None:
     device = config.get("device", "cpu")
     engine_path = ROOT / config.get("stockfish_dir", "stockfish") / "src" / "stockfish.exe"
 
-    if games < 1 or epochs < 1 or batch_size < 1:
-        raise ValueError("supervised_games, supervised_epochs, and supervised_batch_size must be positive")
+    if games < 1 or iterations < 1 or batch_size < 1 or save_every < 1:
+        raise ValueError("supervised_games, supervised_iterations, supervised_batch_size, and save_in_every_iter must be positive")
 
     agent = Agent(
         temperature=config.get("temperature", 1.0),
@@ -56,6 +61,14 @@ def main() -> None:
         simulation_count=config.get("simulation_count", 64),
         exploration_strength=config.get("exploration_strength", 1.5),
     )
+    completed = 0
+    if args.resume:
+        agent.load(args.resume)
+        try:
+            completed = int(args.resume.stem.rsplit("_", 1)[1])
+        except (IndexError, ValueError) as exc:
+            raise ValueError(f"Cannot determine completed iterations from checkpoint filename: {args.resume.name}") from exc
+        print(f"Resuming from {completed} iteration")
 
     # Each recorded sample is (encoded board, Stockfish move ID).
     samples: list[tuple[torch.Tensor, int]] = []
@@ -89,28 +102,32 @@ def main() -> None:
         raise RuntimeError("Stockfish generated no training positions")
 
     agent.chess_net.train()
-    for epoch in range(epochs):
-        random.shuffle(samples)
-        total_loss = 0.0
-        batches = 0
-        for start in range(0, len(samples), batch_size):
-            batch = samples[start : start + batch_size]
-            states = torch.stack([sample[0] for sample in batch]).to(device)
-            targets = torch.tensor([sample[1] for sample in batch], dtype=torch.long, device=device)
-            logits, _ = agent.chess_net(states)
-            loss = F.cross_entropy(logits, targets)
-            agent.optimizer.zero_grad(set_to_none=True)
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(agent.chess_net.parameters(), config.get("gradient_clip", 5.0))
-            agent.optimizer.step()
-            total_loss += float(loss.item())
-            batches += 1
-        print(f"Epoch {epoch + 1}/{epochs}: policy loss {total_loss / batches:.4f}")
-
-    output = ROOT / config.get("checkpoint_dir", "checkpoints") / "supervised_pretrained.pt"
-    output.parent.mkdir(parents=True, exist_ok=True)
-    agent.save(output)
-    print(f"Saved supervised checkpoint: {output}")
+    output_dir = ROOT / config.get("checkpoint_dir", "checkpoints")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    remaining = max(0, iterations - completed)
+    while remaining:
+        block = min(save_every, remaining)
+        for _ in range(block):
+            random.shuffle(samples)
+            total_loss = 0.0
+            batches = 0
+            for start in range(0, len(samples), batch_size):
+                batch = samples[start : start + batch_size]
+                states = torch.stack([sample[0] for sample in batch]).to(device)
+                targets = torch.tensor([sample[1] for sample in batch], dtype=torch.long, device=device)
+                logits, _ = agent.chess_net(states)
+                loss = F.cross_entropy(logits, targets)
+                agent.optimizer.zero_grad(set_to_none=True)
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(agent.chess_net.parameters(), config.get("gradient_clip", 5.0))
+                agent.optimizer.step()
+                total_loss += float(loss.item())
+                batches += 1
+            completed += 1
+            print(f"Iteration {completed}/{iterations}: policy loss {total_loss / batches:.4f}")
+        remaining -= block
+        agent.save(output_dir / f"agent_iteration_{completed:06d}.pt")
+        print(f"Saved checkpoint at iteration {completed}")
 
 
 if __name__ == "__main__":
