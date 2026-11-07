@@ -42,7 +42,7 @@ def main() -> None:
     config = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
     games = int(config.get("supervised_games", 1000))
     games_per_update = int(config.get("supervised_games_per_update", 10))
-    save_every = int(config.get("save_in_every_iter", 10))
+    save_every = int(config.get("save_in_every_iter", 1))
     batch_size = int(config.get("supervised_batch_size", 128))
     opening_plies = int(config.get("supervised_random_opening_plies", 12))
     stockfish_elo = int(config.get("stockfish_elo", 1400))
@@ -70,7 +70,8 @@ def main() -> None:
             raise ValueError(f"Cannot determine completed iterations from checkpoint filename: {args.resume.name}") from exc
         print(f"Resuming from {completed} iteration")
 
-    # Keep a replay set so each update can mix recent games with earlier ones.
+    # Accumulate only the games for the current update. Clear this after each
+    # optimizer update so later updates do not repeatedly train on old games.
     samples: list[tuple[torch.Tensor, int, float]] = []
     output_dir = ROOT / config.get("checkpoint_dir", "checkpoints")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -158,6 +159,7 @@ def main() -> None:
                 if completed % save_every == 0 or game_no + 1 == games:
                     agent.save(output_dir / f"agent_iteration_{completed:06d}.pt")
                     print(f"Saved checkpoint at iteration {completed}")
+                samples.clear()
     finally:
         engine.quit()
 
